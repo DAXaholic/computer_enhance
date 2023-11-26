@@ -5,11 +5,25 @@
 typedef uint32_t u32;
 typedef double f64;
 
+f64 minF64(f64 lhs, f64 rhs) {
+    return lhs < rhs ? lhs : rhs;
+}
+
+f64 maxF64(f64 lhs, f64 rhs) {
+    return lhs > rhs ? lhs : rhs;
+}
+
 f64 randomF64(f64 min, f64 max)
 {
     f64 range = max - min;
     f64 randPercentage = (f64)(rand()) / RAND_MAX;
     return min + range * randPercentage;
+}
+
+f64 randomF64Clustered(f64 pivot, f64 delta, f64 min, f64 max) {
+    f64 effectiveMin = maxF64(min, pivot - delta);
+    f64 effectiveMax = minF64(max, pivot + delta);
+    return randomF64(effectiveMin, effectiveMax);
 }
 
 int writeJsonStart(FILE *dest)
@@ -98,13 +112,25 @@ int main(int argc, char *argv[])
     const f64 earthRadius = 6372.8;
     const f64 sumFactor = 1.0 / (f64)numPairs;
     f64 avgDistance = 0;
+    const f64 clusterSideDelta = randomF64(15, 30);
+    f64 clusterX = 0;
+    f64 clusterY = 0;
+    const int maxPairsPerCluster = (numPairs / 64) + 1;
+    int remainingPairsInCluster = 0;
 
     writeJsonStart(dest);
     for (int i = 1; i <= numPairs; i++) {
-        const f64 x0 = randomF64(-180.0, 180.0);
-        const f64 y0 = randomF64(-90.0, 90.0);
-        const f64 x1 = randomF64(-180.0, 180.0);
-        const f64 y1 = randomF64(-90.0, 90.0);
+        if (remainingPairsInCluster == 0) {
+            clusterX = randomF64(-180.0, 180);
+            clusterY = randomF64(-90, 90);
+            remainingPairsInCluster = maxPairsPerCluster;
+        }
+        remainingPairsInCluster--;
+
+        const f64 x0 = randomF64Clustered(clusterX, clusterSideDelta, -180.0, 180.0);
+        const f64 y0 = randomF64Clustered(clusterY, clusterSideDelta, -90.0, 90.0);
+        const f64 x1 = randomF64Clustered(clusterX, clusterSideDelta, -180.0, 180.0);
+        const f64 y1 = randomF64Clustered(clusterY, clusterSideDelta, -90.0, 90.0);
         
         writeJsonObject(dest, x0, y0, x1, y1, i == numPairs);
 
@@ -113,11 +139,11 @@ int main(int argc, char *argv[])
     }
     writeJsonEnd(dest);
 
+    fclose(dest);
+
     fprintf(stdout, "Seed: %i\n", seed);
     fprintf(stdout, "Pairs: %i\n", numPairs);
-    fprintf(stdout, "Avg. distance: %f\n", avgDistance);
-
-    fclose(dest);
+    fprintf(stdout, "Avg. distance: %.16f\n", avgDistance);
 
     return 0;
 }
