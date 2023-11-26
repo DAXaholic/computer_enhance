@@ -21,7 +21,7 @@ int writeJsonObject(FILE *dest, f64 x0, f64 y0, f64 x1, f64 y1, bool isLastOne)
 {
     return fprintf(
         dest,
-        "    {\"x0\":%f, \"y0\":%f, \"x1\":%f, \"y1\":%f}%s\n",
+        "    {\"x0\":%.16f, \"y0\":%.16f, \"x1\":%.16f, \"y1\":%.16f}%s\n",
         x0,
         y0,
         x1,
