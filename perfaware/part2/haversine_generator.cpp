@@ -48,6 +48,11 @@ int writeJsonEnd(FILE *dest)
     return fprintf(dest, "  ]\n}\n");
 }
 
+size_t writeF64(FILE *dest, f64 value)
+{
+    return fwrite((void*)&value, sizeof(f64), 1, dest);
+}
+
 static f64 Square(f64 A)
 {
     f64 Result = (A*A);
@@ -67,32 +72,32 @@ static f64 ReferenceHaversine(f64 X0, f64 Y0, f64 X1, f64 Y1, f64 EarthRadius)
        Instead, it attempts to follow, as closely as possible, the formula used in the real-world
        question on which these homework exercises are loosely based.
     */
-    
+
     f64 lat1 = Y0;
     f64 lat2 = Y1;
     f64 lon1 = X0;
     f64 lon2 = X1;
-    
+
     f64 dLat = RadiansFromDegrees(lat2 - lat1);
     f64 dLon = RadiansFromDegrees(lon2 - lon1);
     lat1 = RadiansFromDegrees(lat1);
     lat2 = RadiansFromDegrees(lat2);
-    
+
     f64 a = Square(sin(dLat/2.0)) + cos(lat1)*cos(lat2)*Square(sin(dLon/2));
     f64 c = 2.0*asin(sqrt(a));
-    
+
     f64 Result = EarthRadius * c;
-    
+
     return Result;
 }
 
 int main(int argc, char *argv[])
 {
-    if (argc != 4) {
-        fprintf(stderr, "Usage: %s [seed] [pairs to generate] [file name]\n", argv[0]);
+    if (argc < 4 || argc > 5) {
+        fprintf(stderr, "Usage: %s [seed] [pairs to generate] [json file name] [(opt) answer file name]\n", argv[0]);
         return 1;
     }
-    
+
     const u32 seed = atoi(argv[1]);
     srand(seed);
 
@@ -101,12 +106,21 @@ int main(int argc, char *argv[])
         fprintf(stderr, "The number of pairs to generate must be a positive integer.\n");
         return 1;
     }
-    
-    const char *fileName = argv[3];
-    FILE *dest = nullptr;
-    if (fopen_s(&dest, fileName, "w") != 0) {
-        fprintf(stderr, "Could not open file '%s'.", fileName);
+
+    FILE *jsonFile = nullptr;
+    const char *jsonFileName = argv[3];
+    if (fopen_s(&jsonFile, jsonFileName, "wt") != 0) {
+        fprintf(stderr, "Could not open file '%s'.", jsonFileName);
         return 2;
+    }
+
+    FILE *answerFile = nullptr;
+    if (argc >= 5) {
+        const char *answerFileName = argv[4];
+        if (fopen_s(&answerFile, answerFileName, "wb") != 0) {
+            fprintf(stderr, "Could not open file '%s'.", answerFileName);
+            return 2;
+        }
     }
 
     const f64 earthRadius = 6372.8;
@@ -118,7 +132,7 @@ int main(int argc, char *argv[])
     const int maxPairsPerCluster = (numPairs / 64) + 1;
     int remainingPairsInCluster = 0;
 
-    writeJsonStart(dest);
+    writeJsonStart(jsonFile);
     for (int i = 1; i <= numPairs; i++) {
         if (remainingPairsInCluster == 0) {
             clusterX = randomF64(-180.0, 180);
@@ -131,15 +145,20 @@ int main(int argc, char *argv[])
         const f64 y0 = randomF64Clustered(clusterY, clusterSideDelta, -90.0, 90.0);
         const f64 x1 = randomF64Clustered(clusterX, clusterSideDelta, -180.0, 180.0);
         const f64 y1 = randomF64Clustered(clusterY, clusterSideDelta, -90.0, 90.0);
-        
-        writeJsonObject(dest, x0, y0, x1, y1, i == numPairs);
+        writeJsonObject(jsonFile, x0, y0, x1, y1, i == numPairs);
 
         const f64 distance = ReferenceHaversine(x0, y0, x1, y1, earthRadius);
+        if (answerFile != nullptr) {
+            writeF64(answerFile, distance);
+        }
+
         avgDistance += distance * sumFactor;
     }
-    writeJsonEnd(dest);
+    writeF64(answerFile, avgDistance);
+    writeJsonEnd(jsonFile);
 
-    fclose(dest);
+    fclose(answerFile);
+    fclose(jsonFile);
 
     fprintf(stdout, "Seed: %i\n", seed);
     fprintf(stdout, "Pairs: %i\n", numPairs);
