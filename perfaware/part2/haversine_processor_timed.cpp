@@ -10,6 +10,7 @@ typedef int64_t i64;
 typedef double f64;
 
 #include "haversine_platform_metrics.cpp"
+#include "haversine_simple_profiler.cpp"
 
 static f64 Square(f64 A)
 {
@@ -26,6 +27,7 @@ static f64 RadiansFromDegrees(f64 Degrees)
 // NOTE(casey): EarthRadius is generally expected to be 6372.8
 static f64 ReferenceHaversine(f64 X0, f64 Y0, f64 X1, f64 Y1, f64 EarthRadius)
 {
+    PROFILE_BLOCK(ReferenceHaversine)
     /* NOTE(casey): This is not meant to be a "good" way to calculate the Haversine distance.
        Instead, it attempts to follow, as closely as possible, the formula used in the real-world
        question on which these homework exercises are loosely based.
@@ -312,6 +314,8 @@ bool ReadNextHaversineJsonDistance(
     HaversineDistance *haversineDistance,
     bool isFirstHaversineDistance)
 {
+    PROFILE_BLOCK(ParseJson)
+
     JsonToken token = {};
 
     if (!isFirstHaversineDistance &&
@@ -470,26 +474,6 @@ void DumpJsonToken(FILE *file, const JsonToken *token)
     }
 }
 
-void ShowTimings(
-    u64 tscJson,
-    u64 tscAnswer,
-    u64 tscAlloc,
-    u64 tscProcessing,
-    u64 tscHaversine,
-    u64 tscFree)
-{
-    u64 tscTotal = tscJson + tscAnswer + tscAlloc + tscProcessing + tscHaversine;
-    u64 tscParsing = tscProcessing - tscHaversine;
-    printf("------------ Timings ------------\n");
-    printf("JSON file: %llu (%.2f%%)\n", tscJson, (double)tscJson * 100 / tscTotal);
-    printf("Answer file: %llu (%.2f%%)\n", tscAnswer, (double)tscAnswer * 100 / tscTotal);
-    printf("Allocation: %llu (%.2f%%)\n", tscAlloc, (double)tscAlloc * 100 / tscTotal);
-    printf("Parsing: %llu (%.2f%%)\n", tscParsing, (double)tscParsing * 100 / tscTotal);
-    printf("Haversine: %llu (%.2f%%)\n", tscHaversine, (double)tscHaversine * 100 / tscTotal);
-    printf("Free: %llu (%.2f%%)\n", tscFree, (double)tscFree * 100 / tscTotal);
-    printf("Total: %llu (%.1f ms)\n", tscTotal, (double)tscTotal * 1000 / GuessCPUTimerFreq());
-}
-
 int main(int argc, char *argv[])
 {
     if (argc < 2 || argc > 3) {
@@ -497,89 +481,95 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    u64 tscStartOpenJson = ReadCPUTimer();
-    FILE *jsonFile = nullptr;
-    const char *jsonFileName = argv[1];
-    if (fopen_s(&jsonFile, jsonFileName, "rb") != 0) {
-        fprintf(stderr, "Could not open file '%s'.\n", jsonFileName);
-        return 2;
-    }
-    u64 tscEndOpenJson = ReadCPUTimer();
+    BeginProfile();
 
-    u64 tscStartReadAnswer = ReadCPUTimer();
-    f64 *answerData = nullptr;
-    u64 answerDataSize = 0;
-    if (argc >= 3) {
-        const char *answerFileName = argv[2];
-        FILE *answerFile = nullptr;
-        if (fopen_s(&answerFile, answerFileName, "rb") != 0) {
-            fprintf(stderr, "Could not open file '%s'.\n", answerFileName);
+    FILE *jsonFile = nullptr;
+    { 
+        PROFILE_BLOCK(JSON file open)
+        const char *jsonFileName = argv[1];
+        if (fopen_s(&jsonFile, jsonFileName, "rb") != 0) {
+            fprintf(stderr, "Could not open file '%s'.\n", jsonFileName);
             return 2;
         }
-        u64 answerFileSize = GetFileSize(answerFile);
-        answerData = (f64 *)malloc(answerFileSize);
-        answerDataSize = answerFileSize / 8;
-        fread_s(answerData, answerFileSize, sizeof(f64), answerFileSize / sizeof(f64), answerFile);
-        fclose(answerFile);
     }
-    u64 tscEndReadAnswer = ReadCPUTimer();
 
-    u64 tscStartAlloc = ReadCPUTimer();
-    u64 jsonFileSize = GetFileSize(jsonFile);
-    char *jsonData = (char *)malloc(jsonFileSize);
-    if (jsonData == nullptr) {
-        fprintf(stderr, "Could not allocate memory for JSON data.\n");
-        return 3;
-    }
-    u64 tscEndAlloc = ReadCPUTimer();
-
-    u64 tscStartReadJson = ReadCPUTimer();
-    u64 bytesRead = fread_s(jsonData, jsonFileSize, sizeof(char), jsonFileSize, jsonFile);
-    fclose(jsonFile);
-    if (bytesRead != jsonFileSize)
+    f64 *answerData = nullptr;
+    u64 answerDataSize = 0;
     {
-        fprintf(stderr, "Could not read whole JSON data (%lld of %lld bytes read).\n", bytesRead, jsonFileSize);
-        return 4;
+        PROFILE_BLOCK(Answer file)
+        if (argc >= 3) {
+            const char *answerFileName = argv[2];
+            FILE *answerFile = nullptr;
+            if (fopen_s(&answerFile, answerFileName, "rb") != 0) {
+                fprintf(stderr, "Could not open file '%s'.\n", answerFileName);
+                return 2;
+            }
+            u64 answerFileSize = GetFileSize(answerFile);
+            answerData = (f64 *)malloc(answerFileSize);
+            answerDataSize = answerFileSize / 8;
+            fread_s(answerData, answerFileSize, sizeof(f64), answerFileSize / sizeof(f64), answerFile);
+            fclose(answerFile);
+        }
     }
-    u64 tscEndReadJson = ReadCPUTimer();
+
+    u64 jsonFileSize = 0;
+    char *jsonData = nullptr;
+    {
+        PROFILE_BLOCK(Allocation)
+        jsonFileSize = GetFileSize(jsonFile);
+        jsonData = (char *)malloc(jsonFileSize);
+        if (jsonData == nullptr) {
+            fprintf(stderr, "Could not allocate memory for JSON data.\n");
+            return 3;
+        }
+    }
+
+    {
+        PROFILE_BLOCK(JSON file read)
+        u64 bytesRead = fread_s(jsonData, jsonFileSize, sizeof(char), jsonFileSize, jsonFile);
+        fclose(jsonFile);
+        if (bytesRead != jsonFileSize)
+        {
+            fprintf(stderr, "Could not read whole JSON data (%lld of %lld bytes read).\n", bytesRead, jsonFileSize);
+            return 4;
+        }
+    }
 
     bool failedProcessing = false;
-    JsonToken token = {};
-    JsonReadContext context = {};
-    context.Data = jsonData;
-    context.Length = jsonFileSize;
-    HaversineDistance haversineDistance;
-    f64 distanceSum = 0;
-    u64 distanceCount = 0;
-    u64 tscSumHaversine = 0;
-    u64 tscStartProcessing = ReadCPUTimer();
-    if (ReadHaversineJsonStart(&context))
     {
-        while (ReadNextHaversineJsonDistance(&context, &haversineDistance, distanceCount == 0))
+        PROFILE_BLOCK(Processing)
+        JsonToken token = {};
+        JsonReadContext context = {};
+        context.Data = jsonData;
+        context.Length = jsonFileSize;
+        HaversineDistance haversineDistance;
+        f64 distanceSum = 0;
+        u64 distanceCount = 0;
+        if (ReadHaversineJsonStart(&context))
         {
-            u64 tscStartHaversine = ReadCPUTimer();
-            const f64 earthRadius = 6372.8;
-            distanceSum += ReferenceHaversine(
-                haversineDistance.X0,
-                haversineDistance.Y0,
-                haversineDistance.X1,
-                haversineDistance.Y1,
-                earthRadius);
-            ++distanceCount;
-            tscSumHaversine += ReadCPUTimer() - tscStartHaversine;
-        }
+            while (ReadNextHaversineJsonDistance(&context, &haversineDistance, distanceCount == 0))
+            {
+                const f64 earthRadius = 6372.8;
+                distanceSum += ReferenceHaversine(
+                    haversineDistance.X0,
+                    haversineDistance.Y0,
+                    haversineDistance.X1,
+                    haversineDistance.Y1,
+                    earthRadius);
+                ++distanceCount;
+            }
 
-        if (distanceCount > 0)
+            if (distanceCount > 0)
+            {
+                fprintf(stdout, "Pairs: %llu\n", distanceCount);
+                fprintf(stdout, "Avg. distance: %.16f\n", distanceSum / distanceCount);
+            }
+        }
+        else
         {
-            fprintf(stdout, "Pairs: %llu\n", distanceCount);
-            fprintf(stdout, "Avg. distance: %.16f\n", distanceSum / distanceCount);
+            fprintf(stderr, "Could not parse start of haversine JSON file.\n");
         }
     }
-    else
-    {
-        fprintf(stderr, "Could not parse start of haversine JSON file.\n");
-    }
-    u64 tscEndProcessing = ReadCPUTimer();
 
     if (answerData != nullptr)
     {
@@ -587,18 +577,15 @@ int main(int argc, char *argv[])
         fprintf(stdout, "Answer avg. distance: %.16f\n", answerData[answerDataSize - 1]);
     }
 
-    u64 tscStartFree = ReadCPUTimer();
-    if (answerData != nullptr) free(answerData);
-    if (jsonData != nullptr) free(jsonData);
-    u64 tscEndFree = ReadCPUTimer();
+    {
+        PROFILE_BLOCK(Free)
+        if (answerData != nullptr) free(answerData);
+        if (jsonData != nullptr) free(jsonData);
+    }
 
-    ShowTimings(
-        tscEndOpenJson - tscStartOpenJson + tscEndReadJson - tscStartReadJson,
-        tscEndReadAnswer - tscStartReadAnswer,
-        tscEndAlloc - tscStartAlloc,
-        tscEndProcessing - tscStartProcessing,
-        tscSumHaversine,
-        tscEndFree - tscStartFree);
+    EndProfile();
+
+    DumpProfile();
 
     return failedProcessing ? 9 : 0;
 }
