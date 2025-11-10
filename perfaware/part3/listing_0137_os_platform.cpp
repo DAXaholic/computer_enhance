@@ -11,7 +11,7 @@
    ======================================================================== */
 
 /* ========================================================================
-   LISTING 126
+   LISTING 137
    ======================================================================== */
 
 static u64 EstimateCPUTimerFreq(void);
@@ -23,6 +23,7 @@ static u64 EstimateCPUTimerFreq(void);
 #include <psapi.h>
 
 #pragma comment (lib, "advapi32.lib")
+#pragma comment (lib, "bcrypt.lib")
 
 struct os_platform
 {
@@ -54,6 +55,22 @@ static u64 ReadOSPageFaultCount(void)
     GetProcessMemoryInfo(GlobalOSPlatform.ProcessHandle, (PROCESS_MEMORY_COUNTERS *)&MemoryCounters, sizeof(MemoryCounters));
     
     u64 Result = MemoryCounters.PageFaultCount;
+    return Result;
+}
+
+static u64 GetMaxOSRandomCount(void)
+{
+    return 0xffffffff;
+}
+
+static b32 ReadOSRandomBytes(u64 Count, void *Dest)
+{
+    b32 Result = false;
+    if(Count < GetMaxOSRandomCount())
+    {
+        Result = (BCryptGenRandom(0, (BYTE *)Dest, (u32)Count, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0);
+    }
+    
     return Result;
 }
 
@@ -150,6 +167,25 @@ static u64 ReadOSPageFaultCount(void)
     return Result;
 }
 
+static u64 GetMaxOSRandomCount(void)
+{
+    return SSIZE_MAX;
+}
+
+static b32 ReadOSRandomBytes(u64 Count, void *Dest)
+{
+    // NOTE(casey): The course materials are not tested on MacOS/Linux. In theory,
+    // you would do something like the code below, with the modification that
+    // you would have to check an implementation-defined limit on the size of read()
+    // and do multiple read()'s to make sure you filled the entire buffer.
+
+    int DevRandom = open("/dev/urandom", O_RDONLY);
+    b32 Result = (read(DevRandom, Dest.Data, Dest.Count) == Count);
+    close(DevRandom);
+    
+    return Result;
+}
+
 static void InitializeOSPlatform(void)
 {
     if(!GlobalOSPlatform.Initialized)
@@ -223,4 +259,21 @@ static u64 EstimateCPUTimerFreq(void)
 	}
 	
 	return CPUFreq;
+}
+
+inline void FillWithRandomBytes(buffer Dest)
+{
+    u64 MaxRandCount = GetMaxOSRandomCount();
+    u64 AtOffset = 0;
+    while(AtOffset < Dest.Count)
+    {
+        u64 ReadCount = Dest.Count - AtOffset;
+        if(ReadCount > MaxRandCount)
+        {
+            ReadCount = MaxRandCount;
+        }
+        
+        ReadOSRandomBytes(ReadCount, Dest.Data + AtOffset);
+        AtOffset += ReadCount;
+    }
 }
